@@ -12,6 +12,14 @@ export const StockTreemap = ({ data }) => {
     value: stock.value,
   }));
   
+  // Ensure we have only one unique entry per ticker
+  const uniqueData = Object.values(
+    treemapData.reduce((acc, item) => {
+      acc[item.name] = item;
+      return acc;
+    }, {})
+  );
+  
   // Custom tooltip content
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length > 0) {
@@ -77,7 +85,7 @@ export const StockTreemap = ({ data }) => {
           fill="#fff"
           fontSize={12}
         >
-          {value ? `$${Math.round(value)}` : ''}
+          {value ? `${Math.round(value)}` : ''}
         </text>
       </g>
     );
@@ -86,10 +94,10 @@ export const StockTreemap = ({ data }) => {
   return (
     <div className="treemap-container" style={{ width: '100%', height: 400 }}>
       <h3>Portfolio Treemap</h3>
-      {treemapData.length > 0 ? (
+      {uniqueData.length > 0 ? (
         <ResponsiveContainer width="100%" height="100%">
           <Treemap
-            data={treemapData}
+            data={uniqueData}
             dataKey="size"
             aspectRatio={4/3}
             stroke="#fff"

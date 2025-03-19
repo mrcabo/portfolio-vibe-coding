@@ -66,12 +66,18 @@ def get_stock_data(ticker, max_retries=3):
             stock = yf.Ticker(ticker)
             info = stock.info
             
+            # Verify we got some valid data
+            if not info or len(info) < 2:  # Empty or nearly empty info dict
+                print(f"Got empty info for {ticker}, retrying...")
+                raise ValueError(f"Empty info for {ticker}")
+                
             # Also get history to ensure we have price data
             hist = stock.history(period="2d")
             
             # Validate we have enough data
-            if not info or (not hist.empty and len(hist) < 1):
-                raise ValueError(f"Incomplete data for {ticker}")
+            if hist.empty or len(hist) < 1:
+                print(f"Got empty history for {ticker}, retrying...")
+                raise ValueError(f"Empty history for {ticker}")
                 
             # Store in cache
             STOCK_CACHE[ticker] = (stock, current_time)
@@ -87,87 +93,91 @@ def get_stock_data(ticker, max_retries=3):
                 print(f"Rate limited. Waiting {wait_time:.2f} seconds before retry...")
                 time.sleep(wait_time)
             elif retries >= max_retries:
-                # Last attempt failed, check if fallback data is available
-                if FALLBACK_AVAILABLE and retries >= max_retries:
-                    fallback = get_fallback_stock_data(ticker)
-                    if fallback:
-                        print(f"Using fallback data for {ticker}")
-                        # Create a minimal fake stock object with the necessary fields
-                        class FallbackStock:
-                            def __init__(self, ticker, fallback_data):
-                                self.ticker = ticker
-                                self.info = {
-                                    'regularMarketPrice': fallback_data['price'],
-                                    'shortName': fallback_data['name']
-                                }
-                                self._fallback = True
-                                self._fallback_data = fallback_data
-                                
-                            def history(self, period=None):
-                                # Create a minimal fake history with just start and end prices
-                                import pandas as pd
-                                import numpy as np
-                                
-                                # Create a date range based on period
-                                end_date = datetime.now()
-                                if period == '1d':
-                                    periods = 2
-                                    start_date = end_date - timedelta(days=1)
-                                elif period == '1mo':
-                                    periods = 22
-                                    start_date = end_date - timedelta(days=30)
-                                elif period == '3mo':
-                                    periods = 66
-                                    start_date = end_date - timedelta(days=90)
-                                elif period == '6mo':
-                                    periods = 132
-                                    start_date = end_date - timedelta(days=180)
-                                elif period == '1y':
-                                    periods = 253
-                                    start_date = end_date - timedelta(days=365)
-                                else:
-                                    periods = 22
-                                    start_date = end_date - timedelta(days=30)
-                                
-                                # Create date range
-                                date_range = pd.date_range(start=start_date, end=end_date, periods=periods)
-                                
-                                # Calculate price path based on current price and change percentage
-                                current_price = self._fallback_data['price']
-                                change_pct = self._fallback_data['change']
-                                
-                                # Work backward to get the starting price
-                                start_price = current_price / (1 + change_pct/100)
-                                
-                                # Generate a somewhat realistic price path
-                                price_path = np.linspace(start_price, current_price, periods)
-                                # Add some noise to make it look more realistic
-                                noise = np.random.normal(0, current_price * 0.01, periods)
-                                price_path = price_path + noise
-                                # Ensure the final price is the current price
-                                price_path[-1] = current_price
-                                
-                                # Create DataFrame
-                                df = pd.DataFrame({
-                                    'Open': price_path,
-                                    'High': price_path * 1.005,
-                                    'Low': price_path * 0.995,
-                                    'Close': price_path,
-                                    'Volume': np.random.randint(1000000, 10000000, periods)
-                                }, index=date_range)
-                                
-                                return df
-                        
-                        # Return the fallback stock object
-                        fallback_stock = FallbackStock(ticker, fallback)
-                        STOCK_CACHE[ticker] = (fallback_stock, current_time)
-                        return fallback_stock
-                
-                # No fallback available or fallback didn't have this stock
-                raise
+                # We've tried max_retries times, use fallback data
+                break
             else:
                 # Other error, short pause before retry
                 time.sleep(1)
+    
+    # All retries failed, check if fallback data is available
+    if FALLBACK_AVAILABLE:
+        fallback = get_fallback_stock_data(ticker)
+        if fallback:
+            print(f"Using fallback data for {ticker}")
+            # Create a minimal fake stock object with the necessary fields
+            class FallbackStock:
+                def __init__(self, ticker, fallback_data):
+                    self.ticker = ticker
+                    self.info = {
+                        'regularMarketPrice': fallback_data['price'],
+                        'shortName': fallback_data['name']
+                    }
+                    self._fallback = True
+                    self._fallback_data = fallback_data
+                    
+                def history(self, period=None):
+                    # Create a minimal fake history with just start and end prices
+                    import pandas as pd
+                    import numpy as np
+                    
+                    # Create a date range based on period
+                    end_date = datetime.now()
+                    if period == '1d':
+                        periods = 2
+                        start_date = end_date - timedelta(days=1)
+                    elif period == '1mo':
+                        periods = 22
+                        start_date = end_date - timedelta(days=30)
+                    elif period == '3mo':
+                        periods = 66
+                        start_date = end_date - timedelta(days=90)
+                    elif period == '6mo':
+                        periods = 132
+                        start_date = end_date - timedelta(days=180)
+                    elif period == '1y':
+                        periods = 253
+                        start_date = end_date - timedelta(days=365)
+                    else:
+                        periods = 22
+                        start_date = end_date - timedelta(days=30)
+                    
+                    # Create date range
+                    date_range = pd.date_range(start=start_date, end=end_date, periods=periods)
+                    
+                    # Calculate price path based on current price and change percentage
+                    current_price = self._fallback_data['price']
+                    change_pct = self._fallback_data['change']
+                    
+                    # Work backward to get the starting price
+                    start_price = current_price / (1 + change_pct/100)
+                    
+                    # Generate a somewhat realistic price path
+                    price_path = np.linspace(start_price, current_price, periods)
+                    # Add some noise to make it look more realistic
+                    noise = np.random.normal(0, current_price * 0.01, periods)
+                    price_path = price_path + noise
+                    # Ensure the final price is the current price
+                    price_path[-1] = current_price
+                    
+                    # Create DataFrame
+                    df = pd.DataFrame({
+                        'Open': price_path,
+                        'High': price_path * 1.005,
+                        'Low': price_path * 0.995,
+                        'Close': price_path,
+                        'Volume': np.random.randint(1000000, 10000000, periods)
+                    }, index=date_range)
+                    
+                    return df
+            
+            # Return the fallback stock object
+            fallback_stock = FallbackStock(ticker, fallback)
+            STOCK_CACHE[ticker] = (fallback_stock, current_time)
+            return fallback_stock
+    
+    # If we get here, all retries failed and no fallback was available
+    print(f"All attempts to fetch {ticker} failed and no fallback available")
+    return None
 
 @app.route('/api/portfolio', methods=['GET'])
 def get_portfolio():
@@ -190,6 +200,11 @@ def add_stock():
     # Check if stock exists with retry logic
     try:
         stock = get_stock_data(ticker)
+        
+        # Check if we got a valid stock object back
+        if stock is None:
+            # We tried our best but couldn't get stock data
+            return jsonify({'error': f'Could not retrieve data for {ticker} after multiple attempts. Yahoo Finance may be rate limiting requests.'}), 503
         
         # Try to access regularMarketPrice in different ways (yfinance structure can change)
         has_price = False
@@ -276,6 +291,11 @@ def get_portfolio_data():
         try:
             # Get stock data with retry logic
             stock = get_stock_data(ticker)
+            
+            # Skip this stock if we couldn't get data
+            if stock is None:
+                print(f"Skipping {ticker} in portfolio data - could not retrieve data")
+                continue
             
             # Get historical data for the specified period
             hist = None
