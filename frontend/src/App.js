@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { AddStockForm } from './components/AddStockForm';
 import { StockTreemap } from './components/StockTreemap';
@@ -16,8 +16,8 @@ function App() {
   const [activeTab, setActiveTab] = useState('portfolio'); // 'portfolio' or 'manage'
   const [editingStock, setEditingStock] = useState(null);
 
-  // Fetch portfolio data
-  const fetchPortfolioData = async () => {
+  // Fetch portfolio data - now using useCallback to memoize the function
+  const fetchPortfolioData = useCallback(async () => {
     setLoading(true);
     try {
       const response = await axios.get(`${API_URL}/portfolio/data?period=${period}`);
@@ -40,7 +40,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [period]); // Include period in the dependencies since the function uses it
 
   // Initial load and when period changes
   useEffect(() => {
@@ -50,7 +50,7 @@ function App() {
 
     // Clean up interval
     return () => clearInterval(intervalId);
-  }, [period]);
+  }, [fetchPortfolioData]); // Now fetchPortfolioData is properly included
 
   // Add stock to portfolio
   const addStock = async (ticker, shares) => {
