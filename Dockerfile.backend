@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the backend code
 COPY backend/ .
 
+# Create empty portfolio.json file if it doesn't exist
+RUN touch portfolio.json && echo "[]" > portfolio.json
+
 # Expose the port the app runs on
 EXPOSE 5001
 

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -9,9 +7,10 @@ services:
       - "5001:5001"
     volumes:
       - ./backend:/app
-      - ./portfolio.json:/app/portfolio.json
+      - portfolio_data:/app/data
     environment:
       - FLASK_ENV=development
+      - PORTFOLIO_PATH=/app/data/portfolio.json
     restart: unless-stopped
 
   frontend:
@@ -25,3 +24,6 @@ services:
     environment:
       - REACT_APP_API_URL=http://localhost:5001/api
     restart: unless-stopped
+
+volumes:
+  portfolio_data:

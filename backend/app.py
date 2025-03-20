@@ -21,7 +21,7 @@ ALPHA_VANTAGE_API_KEY = "Z8P7GCDNP67S7OD9"
 def health_check():
     return jsonify({"status": "API is running", "data_source": "Alpha Vantage"})
 
-PORTFOLIO_FILE = 'portfolio.json'
+PORTFOLIO_FILE = os.environ.get('PORTFOLIO_PATH', 'portfolio.json')
 
 # Create portfolio file if it doesn't exist
 if not os.path.exists(PORTFOLIO_FILE):
