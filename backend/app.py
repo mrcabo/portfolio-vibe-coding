@@ -203,10 +203,12 @@ def get_portfolio_data():
     
     # Map frontend period to Alpha Vantage period format
     period_map = {
-        '1m': '1mo',
-        '3m': '3mo',
-        '6m': '6mo',
-        '1y': '1y'
+        '1d': '1d',     # 1 day
+        '1w': '1w',     # 1 week
+        '1m': '1mo',    # 1 month
+        '3m': '3mo',    # 3 months
+        '6m': '6mo',    # 6 months
+        '1y': '1y'      # 1 year
     }
     
     av_period = period_map.get(period, '1mo')
