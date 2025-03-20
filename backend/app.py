@@ -2,10 +2,12 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
 import os
-import yfinance as yf
-from datetime import datetime, timedelta
 import time
 import random
+from datetime import datetime, timedelta
+
+# Import our Alpha Vantage module
+from alpha_vantage_api import get_stock_data_alpha_vantage
 
 # Import fallback data
 try:
@@ -15,6 +17,9 @@ except ImportError:
     FALLBACK_AVAILABLE = False
     print("Fallback data not available. This is fine for normal operation.")
 
+# Alpha Vantage API key
+ALPHA_VANTAGE_API_KEY = "Z8P7GCDNP67S7OD9"
+
 app = Flask(__name__)
 # Enable CORS with more explicit settings
 CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "DELETE", "OPTIONS"]}})
@@ -22,7 +27,7 @@ CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "DEL
 # Add a simple route to verify the API is reachable
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "API is running"})
+    return jsonify({"status": "API is running", "data_source": "Alpha Vantage"})
 
 PORTFOLIO_FILE = 'portfolio.json'
 
@@ -46,7 +51,7 @@ def write_portfolio(portfolio):
 
 # Cache for stock data to reduce API calls
 STOCK_CACHE = {}
-CACHE_EXPIRY = 120  # 2 minutes cache expiry
+CACHE_EXPIRY = 300  # 5 minutes cache expiry - increased for Alpha Vantage's rate limits
 
 def get_stock_data(ticker, max_retries=3):
     """Get stock data with retries and caching to handle rate limits"""
@@ -63,21 +68,18 @@ def get_stock_data(ticker, max_retries=3):
     retries = 0
     while retries < max_retries:
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
+            print(f"Fetching data for {ticker} from Alpha Vantage (attempt {retries+1}/{max_retries})...")
+            stock = get_stock_data_alpha_vantage(ticker, ALPHA_VANTAGE_API_KEY)
             
             # Verify we got some valid data
-            if not info or len(info) < 2:  # Empty or nearly empty info dict
+            if not stock or not hasattr(stock, 'info'):
                 print(f"Got empty info for {ticker}, retrying...")
                 raise ValueError(f"Empty info for {ticker}")
                 
-            # Also get history to ensure we have price data
-            hist = stock.history(period="2d")
-            
-            # Validate we have enough data
-            if hist.empty or len(hist) < 1:
-                print(f"Got empty history for {ticker}, retrying...")
-                raise ValueError(f"Empty history for {ticker}")
+            # Also check if we have price data one way or another
+            if not stock.info.get('regularMarketPrice'):
+                print(f"No price data for {ticker}, retrying...")
+                raise ValueError(f"No price data for {ticker}")
                 
             # Store in cache
             STOCK_CACHE[ticker] = (stock, current_time)
@@ -87,7 +89,8 @@ def get_stock_data(ticker, max_retries=3):
             retries += 1
             print(f"Error fetching {ticker} (attempt {retries}/{max_retries}): {str(e)}")
             
-            if "429" in str(e) or "Too Many Requests" in str(e):
+            # Check if this is related to API limits
+            if "api call frequency" in str(e).lower() or "note" in str(e).lower():
                 # Rate limited - add exponential backoff with jitter
                 wait_time = (2 ** retries) + random.uniform(0, 1)
                 print(f"Rate limited. Waiting {wait_time:.2f} seconds before retry...")
@@ -97,7 +100,7 @@ def get_stock_data(ticker, max_retries=3):
                 break
             else:
                 # Other error, short pause before retry
-                time.sleep(1)
+                time.sleep(2)
     
     # All retries failed, check if fallback data is available
     if FALLBACK_AVAILABLE:
@@ -204,9 +207,9 @@ def add_stock():
         # Check if we got a valid stock object back
         if stock is None:
             # We tried our best but couldn't get stock data
-            return jsonify({'error': f'Could not retrieve data for {ticker} after multiple attempts. Yahoo Finance may be rate limiting requests.'}), 503
+            return jsonify({'error': f'Could not retrieve data for {ticker} after multiple attempts. Alpha Vantage may be rate limiting requests.'}), 503
         
-        # Try to access regularMarketPrice in different ways (yfinance structure can change)
+        # Try to access regularMarketPrice in different ways
         has_price = False
         info = stock.info
         
@@ -216,8 +219,8 @@ def add_stock():
             has_price = True
         else:
             # Try to get price from history
-            hist = stock.history(period="1d")
-            if not hist.empty and 'Close' in hist.columns and len(hist['Close']) > 0:
+            hist = stock.history()
+            if hist is not None and not hist.empty and 'Close' in hist.columns and len(hist['Close']) > 0:
                 has_price = True
         
         if not has_price:
@@ -264,7 +267,7 @@ def remove_stock(ticker):
 def get_portfolio_data():
     period = request.args.get('period', '1mo')
     
-    # Map frontend period to yfinance period format
+    # Map frontend period to Alpha Vantage period format
     period_map = {
         '1m': '1mo',
         '3m': '3mo',
@@ -272,7 +275,7 @@ def get_portfolio_data():
         '1y': '1y'
     }
     
-    yf_period = period_map.get(period, '1mo')
+    av_period = period_map.get(period, '1mo')
     
     portfolio = read_portfolio()
     result = []
@@ -297,44 +300,26 @@ def get_portfolio_data():
                 print(f"Skipping {ticker} in portfolio data - could not retrieve data")
                 continue
             
-            # Get historical data for the specified period
-            hist = None
-            retries = 0
-            max_retries = 3
+            # Get price data
+            info = stock.info
+            current_price = info.get('regularMarketPrice')
             
-            while retries < max_retries:
-                try:
-                    hist = stock.history(period=yf_period)
-                    break
-                except Exception as e:
-                    retries += 1
-                    print(f"Error getting history for {ticker} (attempt {retries}/{max_retries}): {str(e)}")
-                    if "429" in str(e) or "Too Many Requests" in str(e):
-                        wait_time = (2 ** retries) + random.uniform(0, 1)
-                        print(f"Rate limited. Waiting {wait_time:.2f} seconds before retry...")
-                        time.sleep(wait_time)
-                    else:
-                        time.sleep(0.5)
+            # Get historical data for the specified period
+            hist = stock.history()
             
             if hist is None or hist.empty:
-                # Fallback to current price only
-                info = stock.info
-                if 'regularMarketPrice' in info and info['regularMarketPrice'] is not None:
-                    current_price = info['regularMarketPrice']
-                    initial_price = current_price  # No change if we only have current
-                elif 'currentPrice' in info and info['currentPrice'] is not None:
-                    current_price = info['currentPrice'] 
-                    initial_price = current_price  # No change if we only have current
-                else:
-                    # If we can't get price, skip this stock
-                    continue
-                    
+                initial_price = current_price  # No change if we only have current
                 percent_change = 0  # Default to no change
             else:
-                # Normal case - we have historical data
-                current_price = hist['Close'].iloc[-1]
-                initial_price = hist['Close'].iloc[0]
-                percent_change = ((current_price - initial_price) / initial_price) * 100
+                # We have historical data, get first and last price
+                if len(hist) > 1:
+                    current_price = hist['Close'].iloc[0]  # Most recent is first
+                    initial_price = hist['Close'].iloc[-1]  # Oldest is last
+                    percent_change = ((current_price - initial_price) / initial_price) * 100
+                else:
+                    # Only have one data point
+                    initial_price = current_price
+                    percent_change = 0
             
             value = current_price * shares
             
