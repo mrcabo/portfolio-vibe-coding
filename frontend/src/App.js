@@ -11,6 +11,7 @@ function App() {
   const [portfolio, setPortfolio] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [warning, setWarning] = useState(null);
   const [period, setPeriod] = useState('1m');
   
   // Fetch portfolio data
@@ -18,11 +19,22 @@ function App() {
     setLoading(true);
     try {
       const response = await axios.get(`${API_URL}/portfolio/data?period=${period}`);
-      setPortfolio(response.data);
+      
+      // Check if the response structure has changed (data + warning)
+      if (response.data.data) {
+        setPortfolio(response.data.data);
+        setWarning(response.data.warning);
+      } else {
+        // Handle backward compatibility with old API format
+        setPortfolio(response.data);
+        setWarning(null);
+      }
+      
       setError(null);
     } catch (err) {
       console.error('Error fetching portfolio data:', err);
       setError('Failed to fetch portfolio data. Please try again.');
+      setWarning(null);
     } finally {
       setLoading(false);
     }
@@ -42,8 +54,16 @@ function App() {
   const addStock = async (ticker, shares) => {
     try {
       setError(null); // Clear any previous errors
+      setWarning(null); // Clear any previous warnings
+      
       const response = await axios.post(`${API_URL}/portfolio`, { ticker, shares });
       console.log('Success response:', response.data);
+      
+      // Check for any warnings in the response
+      if (response.data.warning) {
+        setWarning(response.data.warning);
+      }
+      
       fetchPortfolioData();
     } catch (err) {
       console.error('Error adding stock:', err);
@@ -108,6 +128,7 @@ function App() {
       </div>
       
       {error && <div className="error-message">{error}</div>}
+      {warning && <div className="warning-message">{warning}</div>}
       
       {loading ? (
         <div className="loading">Loading portfolio data...</div>

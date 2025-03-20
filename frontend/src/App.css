@@ -29,7 +29,7 @@ header h1 {
   padding: 15px;
   background-color: #f8f9fa;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .period-selector label {
@@ -50,7 +50,7 @@ header h1 {
   background-color: #f8f9fa;
   padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   width: 300px;
 }
 
@@ -118,7 +118,7 @@ header h1 {
   padding: 20px;
   background-color: #f8f9fa;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .treemap-container h3 {
@@ -131,7 +131,7 @@ header h1 {
   background-color: white;
   padding: 10px;
   border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   border: 1px solid #ddd;
 }
 
@@ -145,7 +145,7 @@ header h1 {
   padding: 20px;
   background-color: #f8f9fa;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   overflow-x: auto;
 }
 
@@ -222,15 +222,34 @@ header h1 {
     flex-direction: column;
     align-items: center;
   }
-  
+
   .add-stock-form {
     width: 100%;
     max-width: 400px;
   }
-  
+
   .period-selector {
     width: 100%;
     max-width: 400px;
     text-align: center;
+  }
+
+  /* Messages */
+  .error-message {
+    padding: 15px;
+    margin-bottom: 20px;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    color: #721c24;
+  }
+
+  .warning-message {
+    padding: 15px;
+    margin-bottom: 20px;
+    background-color: #fff3cd;
+    border: 1px solid #ffecb5;
+    border-radius: 4px;
+    color: #856404;
   }
 }
