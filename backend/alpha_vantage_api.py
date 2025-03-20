@@ -52,6 +52,99 @@ class AlphaVantageAPI:
         response = requests.get(self.base_url, params=params)
         return response.json()
     
+    def get_intraday(self, symbol, interval="60min", period="1mo"):
+        """Get intraday price data
+        
+        Args:
+            symbol: Stock symbol
+            interval: One of: 1min, 5min, 15min, 30min, 60min
+            period: Used for internal calculation of outputsize
+        """
+        # Determine outputsize - we'll use extended for longer periods
+        outputsize = "compact"  # Default to last 100 data points
+        if period in ["3mo", "6mo", "1y"]:
+            outputsize = "full"  # Full output for longer periods
+            
+        params = {
+            "function": "TIME_SERIES_INTRADAY",
+            "symbol": symbol,
+            "interval": interval,
+            "outputsize": outputsize,
+            "apikey": self.api_key
+        }
+        
+        print(f"Requesting intraday data for {symbol} with interval={interval}, outputsize={outputsize}...")
+        response = requests.get(self.base_url, params=params)
+        data = response.json()
+        
+        # Print first part of response for debugging
+        print(f"Intraday data API response keys: {list(data.keys())}")
+        
+        if "Note" in data:
+            print(f"API limit message: {data['Note']}")
+            # Sleep if we hit rate limit
+            time.sleep(12)  # Wait for rate limit to reset
+            return None
+            
+        if "Error Message" in data:
+            print(f"API error: {data['Error Message']}")
+            return None
+        
+        # The key for time series changes based on the interval
+        time_series_key = f"Time Series ({interval})"
+        
+        if time_series_key in data:
+            # Additional debug
+            ts_data = data[time_series_key]
+            print(f"Got {len(ts_data)} periods of intraday data. First timestamp: {next(iter(ts_data))}")
+            
+            try:
+                # Convert to DataFrame
+                df = pd.DataFrame.from_dict(data[time_series_key], orient="index")
+                
+                # Rename columns
+                df = df.rename(columns={
+                    "1. open": "Open",
+                    "2. high": "High",
+                    "3. low": "Low", 
+                    "4. close": "Close",
+                    "5. volume": "Volume"
+                })
+                
+                # Convert data types
+                for col in ["Open", "High", "Low", "Close"]:
+                    df[col] = pd.to_numeric(df[col])
+                df["Volume"] = pd.to_numeric(df["Volume"], downcast="integer")
+                
+                # Set index to datetime
+                df.index = pd.DatetimeIndex(df.index)
+                
+                # Sort by date (most recent first)
+                df = df.sort_index(ascending=False)
+                
+                # Filter based on period
+                if period == "1mo":
+                    cutoff = datetime.now() - timedelta(days=30)
+                    df = df[df.index >= cutoff]
+                elif period == "3mo":
+                    cutoff = datetime.now() - timedelta(days=90)
+                    df = df[df.index >= cutoff]
+                elif period == "6mo":
+                    cutoff = datetime.now() - timedelta(days=180)
+                    df = df[df.index >= cutoff]
+                elif period == "1y":
+                    cutoff = datetime.now() - timedelta(days=365)
+                    df = df[df.index >= cutoff]
+                
+                print(f"Successfully created DataFrame with {len(df)} rows")
+                return df
+            except Exception as e:
+                print(f"Error processing data: {str(e)}")
+                return None
+        
+        print("No time series data found in response")
+        return None
+    
     def get_daily_adjusted(self, symbol, period="1mo"):
         """Get historical price data"""
         # Map period to outputsize
@@ -72,6 +165,7 @@ class AlphaVantageAPI:
         
         # Print first part of response for debugging
         print(f"Daily data API response keys: {list(data.keys())}")
+        print(f"Daily data API response: {json.dumps(data)[:300]}...")
         
         if "Note" in data:
             print(f"API limit message: {data['Note']}")
@@ -149,8 +243,13 @@ def get_stock_data_alpha_vantage(ticker, api_key, period="1mo"):
     
     print(f"Got quote data for {ticker}: {quote}")
     
-    # Get historical data 
-    hist = av.get_daily_adjusted(ticker, period)
+    # Try to get intraday data first (more likely to be available in free tier)
+    hist = av.get_intraday(ticker, interval="60min", period=period)
+    
+    # If intraday didn't work, try daily data
+    if hist is None or hist.empty:
+        print(f"Intraday data not available for {ticker}, trying daily data...")
+        hist = av.get_daily_adjusted(ticker, period)
     
     # If we got quote data but no history, we can still return a valid object
     # This allows the app to work with just current price data
