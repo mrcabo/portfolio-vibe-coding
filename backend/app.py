@@ -6,17 +6,20 @@ import time
 from datetime import datetime, timedelta
 import random
 
-# Import our Yahoo Finance module instead of Alpha Vantage
-from yahoo_finance_api import get_stock_data_yahoo
+# Import our Alpha Vantage module - simplified approach
+from alpha_vantage_api import get_stock_data
 
 app = Flask(__name__)
 # Enable CORS with more explicit settings
 CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "DELETE", "OPTIONS"]}})
 
+# Alpha Vantage API key
+ALPHA_VANTAGE_API_KEY = "Z8P7GCDNP67S7OD9"
+
 # Add a simple route to verify the API is reachable
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "API is running", "data_source": "Yahoo Finance"})
+    return jsonify({"status": "API is running", "data_source": "Alpha Vantage with Fallbacks"})
 
 PORTFOLIO_FILE = os.environ.get('PORTFOLIO_PATH', 'portfolio.json')
 
@@ -42,62 +45,46 @@ def write_portfolio(portfolio):
 STOCK_CACHE = {}
 CACHE_EXPIRY = 300  # 5 minutes cache expiry
 
-def get_stock_data(ticker, max_retries=3):
-    """Get stock data with retries and caching"""
+def get_cached_stock_data(ticker, period="1mo"):
+    """Get stock data with caching"""
     # Check cache first
     current_time = time.time()
     if ticker in STOCK_CACHE:
-        cached_data, timestamp = STOCK_CACHE[ticker]
+        cached_data, timestamp, synthetic_flag = STOCK_CACHE[ticker]
         # If cache is still valid (less than CACHE_EXPIRY seconds old)
-        if current_time - timestamp < CACHE_EXPIRY:
+        if current_time - timestamp < CACHE_EXPIRY and not synthetic_flag:
             print(f"Using cached data for {ticker}")
             return cached_data, None
     
-    # Not in cache or cache expired, fetch from API
-    retries = 0
-    error_message = None
-    while retries < max_retries:
-        try:
-            print(f"Fetching data for {ticker} from Yahoo Finance (attempt {retries+1}/{max_retries})...")
-            # Using Yahoo Finance instead of Alpha Vantage
-            stock = get_stock_data_yahoo(ticker)
-            
-            # Verify we got some valid data
-            if not stock or not hasattr(stock, 'info'):
-                print(f"Got empty info for {ticker}, retrying...")
-                raise ValueError(f"Empty info for {ticker}")
-                
-            # Also check if we have price data one way or another
-            if not stock.info.get('regularMarketPrice'):
-                print(f"No price data for {ticker}, retrying...")
-                raise ValueError(f"No price data for {ticker}")
-                
-            # Store in cache
-            STOCK_CACHE[ticker] = (stock, current_time)
-            return stock, None
-            
-        except Exception as e:
-            retries += 1
-            error_message = str(e)
-            print(f"Error fetching {ticker} (attempt {retries}/{max_retries}): {error_message}")
-            
-            # Add exponential backoff with jitter
-            wait_time = (2 ** retries) + random.uniform(0, 1)
-            print(f"Waiting {wait_time:.2f} seconds before retry...")
-            time.sleep(wait_time)
-    
-    # All retries failed, return cached data if available with an error message
-    if ticker in STOCK_CACHE:
-        # Return expired cache data but with a warning
-        cached_data, old_timestamp = STOCK_CACHE[ticker]
-        cache_age = current_time - old_timestamp
-        cache_minutes = round(cache_age / 60)
+    # Not in cache or cache expired or using synthetic data, fetch from API
+    try:
+        # Use the simplified API approach
+        stock = get_stock_data(ticker, ALPHA_VANTAGE_API_KEY, period)
         
-        print(f"Returning stale cache data for {ticker} ({cache_minutes} minutes old)")
-        return cached_data, f"Using {cache_minutes} minute old data. API request failed."
-    
-    # No cache available
-    return None, error_message or "Could not retrieve data"
+        # Check if we got a valid object
+        if not stock or not hasattr(stock, 'info'):
+            return None, f"Could not get data for {ticker}"
+        
+        warning = None
+        if hasattr(stock, 'is_synthetic') and stock.is_synthetic:
+            warning = f"Using estimated data for {ticker}. Real-time data unavailable."
+            
+        # Store in cache - include the synthetic flag
+        STOCK_CACHE[ticker] = (stock, current_time, stock.is_synthetic if hasattr(stock, 'is_synthetic') else False)
+        return stock, warning
+            
+    except Exception as e:
+        print(f"Error fetching {ticker}: {str(e)}")
+        
+        # If we have cached data (even if expired), return it with a warning
+        if ticker in STOCK_CACHE:
+            cached_data, old_timestamp, synthetic_flag = STOCK_CACHE[ticker]
+            cache_age = current_time - old_timestamp
+            cache_minutes = round(cache_age / 60)
+            
+            return cached_data, f"Using {cache_minutes} minute old data. API request failed."
+        
+        return None, f"Could not retrieve data for {ticker}: {str(e)}"
 
 @app.route('/api/portfolio', methods=['GET'])
 def get_portfolio():
@@ -117,60 +104,45 @@ def add_stock():
     ticker = stock_data['ticker'].upper()
     shares = float(stock_data['shares'])
     
-    # Check if stock exists with retry logic
+    # Check if stock exists
     try:
-        stock, error_message = get_stock_data(ticker)
+        stock, warning = get_cached_stock_data(ticker)
         
         # Check if we got a valid stock object back
         if stock is None:
             # We tried our best but couldn't get stock data
             return jsonify({
-                'error': error_message or f'Could not retrieve data for {ticker} after multiple attempts.'
+                'error': warning or f'Could not retrieve data for {ticker}'
             }), 503
         
-        # Try to access regularMarketPrice
-        has_price = False
-        info = stock.info
+        # Add to portfolio
+        portfolio = read_portfolio()
         
-        if 'regularMarketPrice' in info and info['regularMarketPrice'] is not None:
-            has_price = True
-        else:
-            # Try to get price from history
-            hist = stock.history()
-            if hist is not None and not hist.empty and 'Close' in hist.columns and len(hist['Close']) > 0:
-                has_price = True
+        # Check if stock already exists in portfolio
+        for item in portfolio:
+            if item['ticker'] == ticker:
+                item['shares'] += shares
+                write_portfolio(portfolio)
+                return jsonify({
+                    'message': f'Updated shares for {ticker}',
+                    'warning': warning
+                }), 200
         
-        if not has_price:
-            return jsonify({'error': f'Could not find price data for ticker: {ticker}'}), 404
+        # Add new stock
+        portfolio.append({
+            'ticker': ticker,
+            'shares': shares
+        })
+        
+        write_portfolio(portfolio)
+        return jsonify({
+            'message': f'Added {ticker} to portfolio',
+            'warning': warning
+        }), 201
             
     except Exception as e:
         print(f"Exception when fetching {ticker}:", str(e))
         return jsonify({'error': f'Error fetching stock data: {str(e)}'}), 500
-    
-    # Add to portfolio
-    portfolio = read_portfolio()
-    
-    # Check if stock already exists in portfolio
-    for item in portfolio:
-        if item['ticker'] == ticker:
-            item['shares'] += shares
-            write_portfolio(portfolio)
-            return jsonify({
-                'message': f'Updated shares for {ticker}',
-                'warning': error_message
-            }), 200
-    
-    # Add new stock
-    portfolio.append({
-        'ticker': ticker,
-        'shares': shares
-    })
-    
-    write_portfolio(portfolio)
-    return jsonify({
-        'message': f'Added {ticker} to portfolio',
-        'warning': error_message
-    }), 201
 
 @app.route('/api/portfolio/<ticker>', methods=['DELETE'])
 def remove_stock(ticker):
@@ -198,14 +170,13 @@ def get_portfolio_data():
     if not portfolio:
         return jsonify({"data": [], "warning": None}), 200
     
-    # Use individual requests with retry logic
     for item in portfolio:
         ticker = item['ticker']
         shares = item['shares']
         
         try:
-            # Get stock data with retry logic
-            stock, error_message = get_stock_data(ticker)
+            # Get stock data with caching
+            stock, error_message = get_cached_stock_data(ticker, period)
             
             if error_message:
                 has_warning = True
@@ -218,7 +189,7 @@ def get_portfolio_data():
             
             # Get price data
             info = stock.info
-            current_price = info.get('regularMarketPrice')
+            current_price = info.get('regularMarketPrice', 0)
             
             # Get historical data for the specified period
             hist = stock.history()
@@ -240,7 +211,6 @@ def get_portfolio_data():
             value = current_price * shares
             
             # IMPORTANT: Normalize percentChange to decimal format (0.05 for 5%)
-            # This ensures consistent format across all stock data
             if abs(percent_change) > 1:
                 normalized_percent_change = percent_change / 100
             else:
@@ -251,7 +221,7 @@ def get_portfolio_data():
                 'shares': shares,
                 'currentPrice': current_price,
                 'value': value,
-                'percentChange': normalized_percent_change  # Using normalized value
+                'percentChange': normalized_percent_change
             })
             
         except Exception as e:
