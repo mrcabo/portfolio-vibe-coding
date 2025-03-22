@@ -6,20 +6,17 @@ import time
 from datetime import datetime, timedelta
 import random
 
-# Import our Alpha Vantage module
-from alpha_vantage_api import get_stock_data_alpha_vantage
+# Import our Yahoo Finance module instead of Alpha Vantage
+from yahoo_finance_api import get_stock_data_yahoo
 
 app = Flask(__name__)
 # Enable CORS with more explicit settings
 CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "DELETE", "OPTIONS"]}})
 
-# Alpha Vantage API key
-ALPHA_VANTAGE_API_KEY = "Z8P7GCDNP67S7OD9"
-
 # Add a simple route to verify the API is reachable
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "API is running", "data_source": "Alpha Vantage"})
+    return jsonify({"status": "API is running", "data_source": "Yahoo Finance"})
 
 PORTFOLIO_FILE = os.environ.get('PORTFOLIO_PATH', 'portfolio.json')
 
@@ -43,10 +40,10 @@ def write_portfolio(portfolio):
 
 # Cache for stock data to reduce API calls
 STOCK_CACHE = {}
-CACHE_EXPIRY = 300  # 5 minutes cache expiry - increased for Alpha Vantage's rate limits
+CACHE_EXPIRY = 300  # 5 minutes cache expiry
 
 def get_stock_data(ticker, max_retries=3):
-    """Get stock data with retries and caching to handle rate limits"""
+    """Get stock data with retries and caching"""
     # Check cache first
     current_time = time.time()
     if ticker in STOCK_CACHE:
@@ -61,8 +58,9 @@ def get_stock_data(ticker, max_retries=3):
     error_message = None
     while retries < max_retries:
         try:
-            print(f"Fetching data for {ticker} from Alpha Vantage (attempt {retries+1}/{max_retries})...")
-            stock = get_stock_data_alpha_vantage(ticker, ALPHA_VANTAGE_API_KEY)
+            print(f"Fetching data for {ticker} from Yahoo Finance (attempt {retries+1}/{max_retries})...")
+            # Using Yahoo Finance instead of Alpha Vantage
+            stock = get_stock_data_yahoo(ticker)
             
             # Verify we got some valid data
             if not stock or not hasattr(stock, 'info'):
@@ -83,19 +81,10 @@ def get_stock_data(ticker, max_retries=3):
             error_message = str(e)
             print(f"Error fetching {ticker} (attempt {retries}/{max_retries}): {error_message}")
             
-            # Check if this is related to API limits
-            if "api call frequency" in error_message.lower() or "note" in error_message.lower():
-                # Rate limited - add exponential backoff with jitter
-                wait_time = (2 ** retries) + random.uniform(0, 1)
-                print(f"Rate limited. Waiting {wait_time:.2f} seconds before retry...")
-                error_message = "API rate limit reached. Please try again later."
-                time.sleep(wait_time)
-            elif retries >= max_retries:
-                # We've tried max_retries times, use cached data if available
-                break
-            else:
-                # Other error, short pause before retry
-                time.sleep(2)
+            # Add exponential backoff with jitter
+            wait_time = (2 ** retries) + random.uniform(0, 1)
+            print(f"Waiting {wait_time:.2f} seconds before retry...")
+            time.sleep(wait_time)
     
     # All retries failed, return cached data if available with an error message
     if ticker in STOCK_CACHE:
@@ -105,7 +94,7 @@ def get_stock_data(ticker, max_retries=3):
         cache_minutes = round(cache_age / 60)
         
         print(f"Returning stale cache data for {ticker} ({cache_minutes} minutes old)")
-        return cached_data, f"Using {cache_minutes} minute old data. API rate limit reached."
+        return cached_data, f"Using {cache_minutes} minute old data. API request failed."
     
     # No cache available
     return None, error_message or "Could not retrieve data"
@@ -136,7 +125,7 @@ def add_stock():
         if stock is None:
             # We tried our best but couldn't get stock data
             return jsonify({
-                'error': error_message or f'Could not retrieve data for {ticker} after multiple attempts. Alpha Vantage may be rate limiting requests.'
+                'error': error_message or f'Could not retrieve data for {ticker} after multiple attempts.'
             }), 503
         
         # Try to access regularMarketPrice
@@ -201,18 +190,6 @@ def remove_stock(ticker):
 def get_portfolio_data():
     period = request.args.get('period', '1mo')
     
-    # Map frontend period to Alpha Vantage period format
-    period_map = {
-        '1d': '1d',     # 1 day
-        '1w': '1w',     # 1 week
-        '1m': '1mo',    # 1 month
-        '3m': '3mo',    # 3 months
-        '6m': '6mo',    # 6 months
-        '1y': '1y'      # 1 year
-    }
-    
-    av_period = period_map.get(period, '1mo')
-    
     portfolio = read_portfolio()
     result = []
     has_warning = False
@@ -221,10 +198,7 @@ def get_portfolio_data():
     if not portfolio:
         return jsonify({"data": [], "warning": None}), 200
     
-    # Get all tickers
-    tickers = [item['ticker'] for item in portfolio]
-    
-    # Use individual requests with retry logic instead of batch to avoid rate limits
+    # Use individual requests with retry logic
     for item in portfolio:
         ticker = item['ticker']
         shares = item['shares']
