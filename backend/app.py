@@ -265,12 +265,19 @@ def get_portfolio_data():
             
             value = current_price * shares
             
+            # IMPORTANT: Normalize percentChange to decimal format (0.05 for 5%)
+            # This ensures consistent format across all stock data
+            if abs(percent_change) > 1:
+                normalized_percent_change = percent_change / 100
+            else:
+                normalized_percent_change = percent_change
+                
             result.append({
                 'ticker': ticker,
                 'shares': shares,
                 'currentPrice': current_price,
                 'value': value,
-                'percentChange': percent_change
+                'percentChange': normalized_percent_change  # Using normalized value
             })
             
         except Exception as e:

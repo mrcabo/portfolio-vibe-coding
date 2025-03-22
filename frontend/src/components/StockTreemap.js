@@ -4,7 +4,7 @@ import { Treemap, ResponsiveContainer, Tooltip } from 'recharts';
 export const StockTreemap = ({ data }) => {
   // Transform data for treemap visualization with proper hierarchy
   const transformedData = data.map(stock => {
-    // Debug: Print the percentChange value to understand its format
+    // Optional: log the percent change for verification
     console.log(`${stock.ticker} percentChange:`, stock.percentChange);
 
     return {
@@ -35,29 +35,22 @@ export const StockTreemap = ({ data }) => {
           <p>Shares: {data.shares}</p>
           <p>Price: ${data.price?.toFixed(2)}</p>
           <p>Value: ${data.value?.toFixed(2)}</p>
-          <p>Change: {data.percentChange?.toFixed(2)}%</p>
+          <p>Change: {(data.percentChange * 100).toFixed(2)}%</p> {/* Multiply by 100 for display */}
         </div>
       );
     }
     return null;
   };
 
-  // Color based on percent change (red for negative, green for positive)
+  // Simplified color function - assumes percentChange is always in decimal format (0.05 for 5%)
   const getColor = (percentChange) => {
-    // Handle both percentage format (e.g., 5.0) and decimal format (e.g., 0.05)
-    // If percentChange is very small (likely a decimal), multiply by 100
-    const normalizedPercentChange = Math.abs(percentChange) < 1 && Math.abs(percentChange) > 0
-      ? percentChange * 100
-      : percentChange;
-
-    console.log(`Original percentChange: ${percentChange}, Normalized: ${normalizedPercentChange}`);
-
-    if (normalizedPercentChange > 0) {
-      // Amplify the intensity for better visual differentiation
-      const intensity = Math.min(normalizedPercentChange * 5, 100);
-      return `rgba(0, ${Math.round(128 + intensity)}, 0, 0.9)`;
+    if (percentChange > 0) {
+      // Amplify small changes for better visibility (0-20% scale)
+      const intensity = Math.min(percentChange * 500, 100);
+      return `rgba(0, ${Math.round(155 + intensity)}, 0, 0.9)`;
     } else {
-      const intensity = Math.min(Math.abs(normalizedPercentChange) * 5, 100);
+      // Same for negative changes
+      const intensity = Math.min(Math.abs(percentChange) * 500, 100);
       return `rgba(${Math.round(200 + intensity / 2)}, 0, 0, 0.9)`;
     }
   };
@@ -107,6 +100,15 @@ export const StockTreemap = ({ data }) => {
           fontSize={12}
         >
           {value ? `$${Math.round(value)}` : ''}
+        </text>
+        <text
+          x={x + width / 2}
+          y={y + height / 2 + 30}
+          textAnchor="middle"
+          fill="#fff"
+          fontSize={10}
+        >
+          {(percentChange * 100).toFixed(1)}%  {/* Display percentage with % sign */}
         </text>
       </g>
     );
